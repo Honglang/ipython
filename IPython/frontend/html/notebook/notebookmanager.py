@@ -48,6 +48,8 @@ class NotebookManager(LoggingConfigurable):
         """
     )
     
+    _nb_dirs = Dict()
+    
     filename_ext = Unicode(u'.ipynb')
     allowed_formats = List([u'json',u'py'])
 
@@ -56,17 +58,32 @@ class NotebookManager(LoggingConfigurable):
     # Map notebook names to notebook_ids
     rev_mapping = Dict()
 
-    def list_notebooks(self):
+    def list_notebooks(self, levels=1):
         """List all notebooks in the notebook dir.
 
         This returns a list of dicts of the form::
 
             dict(notebook_id=notebook,name=name)
         """
-        names = glob.glob(os.path.join(self.notebook_dir,
-                                       '*' + self.filename_ext))
-        names = [os.path.splitext(os.path.basename(name))[0]
-                 for name in names]
+        if self.notebook_dir.endswith(os.path.sep):
+            self.notebook_dir = self.notebook_dir[:-1]
+        
+        to_strip = len(self.notebook_dir + os.path.sep)
+        
+        base_depth = self.notebook_dir.count(os.path.sep)
+        
+        names = []
+        # depth-limited walk:
+        for root, dirs, files in os.walk(self.notebook_dir):
+            depth = root.count(os.path.sep) - base_depth
+            if depth > levels:
+                break
+            for file in files:
+                if file.endswith(self.filename_ext):
+                    names.append(os.path.join(root, file)[to_strip:])
+        
+        names = [os.path.splitext(name)[0] for name in names]
+        
 
         data = []
         for name in names:
@@ -75,6 +92,7 @@ class NotebookManager(LoggingConfigurable):
             else:
                 notebook_id = self.rev_mapping[name]
             data.append(dict(notebook_id=notebook_id,name=name))
+            self._nb_dirs[notebook_id] = os.path.split(name)[0]
         data = sorted(data, key=lambda item: item['name'])
         return data
 
@@ -120,7 +138,7 @@ class NotebookManager(LoggingConfigurable):
         """Return a full path to a notebook given its name."""
         filename = name + self.filename_ext
         path = os.path.join(self.notebook_dir, filename)
-        return path       
+        return path
 
     def get_notebook(self, notebook_id, format=u'json'):
         """Get the representation of a notebook in format by notebook_id."""
@@ -203,6 +221,8 @@ class NotebookManager(LoggingConfigurable):
             new_name = nb.metadata.name
         except AttributeError:
             raise web.HTTPError(400, u'Missing notebook name')
+        
+        new_name = os.path.join(self._nb_dirs.get(notebook_id, ''), new_name)
         path = self.get_path_by_name(new_name)
         try:
             with open(path,'w') as f:
@@ -220,7 +240,7 @@ class NotebookManager(LoggingConfigurable):
         
         if old_name != new_name:
             old_path = self.get_path_by_name(old_name)
-            if os.path.isfile(old_path):
+            if False and os.path.isfile(old_path):
                 os.unlink(old_path)
             if self.save_script:
                 old_pypath = os.path.splitext(old_path)[0] + '.py'
